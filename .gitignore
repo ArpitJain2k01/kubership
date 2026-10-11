@@ -4,3 +4,5 @@
 *.test
 *.out
 /app/app
+/kubership
+app/coverage.out
