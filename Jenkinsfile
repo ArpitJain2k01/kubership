@@ -4,7 +4,7 @@
 //   - REGISTRY and IMAGE_REPO: taken from Jenkins environment variables when the
 //     pipeline can see them, otherwise from the defaults in `environment` below.
 //     IMAGE_REPO must be lowercase, e.g. arpitjain2k01/kubership.
-//   - A "Username with password" credential with ID `registry-creds`
+//   - A "Username with password" credential with ID `Registry-creds` (case-sensitive)
 //     holding a registry token with the minimum publish scope.
 pipeline {
     agent {
@@ -210,7 +210,7 @@ spec:
             steps {
                 container('buildah') {
                     withCredentials([usernamePassword(
-                        credentialsId: 'registry-creds',
+                        credentialsId: 'Registry-creds',
                         usernameVariable: 'REGISTRY_USER',
                         passwordVariable: 'REGISTRY_PASSWORD'
                     )]) {
