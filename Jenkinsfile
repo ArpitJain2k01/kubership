@@ -46,6 +46,15 @@ spec:
       volumeMounts:
         - name: buildah-storage
           mountPath: /var/lib/containers
+      # Buildah makes mounts while unpacking layers and running RUN steps. The
+      # nodes' default AppArmor/seccomp profiles deny that ("remount /: permission
+      # denied"), so relax both for this one container. No extra capabilities and
+      # not privileged. Only run trusted branches on this agent.
+      securityContext:
+        appArmorProfile:
+          type: Unconfined
+        seccompProfile:
+          type: Unconfined
   volumes:
     # vfs copies whole layers, so give the builder bounded scratch space.
     - name: buildah-storage
