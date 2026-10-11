@@ -1,18 +1,25 @@
-# syntax=docker/dockerfile:1
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS builder
 
-# ---- build ----
-FROM golang:1.24-alpine AS build
 WORKDIR /src
-COPY app/ ./
-ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-      -ldflags "-s -w -X main.version=${VERSION}" \
-      -o /out/app .
 
-# ---- runtime ----
-# distroless/static: no shell, no package manager, runs as non-root (uid 65532).
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/app /app
+COPY app/go.mod ./app/go.mod
+COPY app/ ./app/
+
+WORKDIR /src/app
+
+# VERSION is reported by /health; the pipeline passes the git SHA.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build \
+    -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /out/kubership .
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+
+COPY --from=builder /out/kubership /kubership
+
 EXPOSE 8080
-USER 65532:65532
-ENTRYPOINT ["/app"]
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["/kubership"]
