@@ -1,3 +1,11 @@
+// Kubership CI: verify -> security scans -> build image -> scan image -> publish.
+//
+// Jenkins configuration this pipeline expects (nothing is hardcoded here):
+//   - REGISTRY and IMAGE_REPO as Jenkins environment variables
+//     (Manage Jenkins -> System -> Global properties, or JCasC).
+//     IMAGE_REPO must be lowercase, e.g. arpitjain2k01/kubership.
+//   - A "Username with password" credential with ID `registry-creds`
+//     holding a registry token with the minimum publish scope.
 pipeline {
     agent {
         kubernetes {
@@ -12,24 +20,71 @@ spec:
   restartPolicy: Never
   containers:
     - name: golang
-      image: golang:1.24
-      command:
-        - cat
+      image: golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c
+      command: [cat]
       tty: true
+    - name: gitleaks
+      image: ghcr.io/gitleaks/gitleaks:v8.30.1
+      command: [cat]
+      tty: true
+    - name: trivy
+      image: aquasec/trivy:0.75.0
+      command: [cat]
+      tty: true
+      env:
+        - name: TRIVY_CACHE_DIR
+          value: /tmp/trivy-cache
+    - name: buildah
+      image: quay.io/buildah/stable:v1.43.4-immutable
+      command: [cat]
+      tty: true
+      env:
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: BUILDAH_ISOLATION
+          value: chroot
+      volumeMounts:
+        - name: buildah-storage
+          mountPath: /var/lib/containers
+  volumes:
+    # vfs copies whole layers, so give the builder bounded scratch space.
+    - name: buildah-storage
+      emptyDir:
+        sizeLimit: 10Gi
 '''
         }
     }
 
     options {
-        timeout(time: 15, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
     stages {
         stage('Checkout') {
             steps {
-                checkout scm
+                script {
+                    // Not named `scm`: that would shadow the built-in variable.
+                    def vars = checkout scm
+                    env.GIT_SHA = vars.GIT_COMMIT
+                }
+            }
+        }
+
+        stage('Preflight') {
+            steps {
+                script {
+                    if (!env.REGISTRY?.trim() || !env.IMAGE_REPO?.trim()) {
+                        error 'REGISTRY and IMAGE_REPO must be set as Jenkins environment variables.'
+                    }
+                    if (env.IMAGE_REPO != env.IMAGE_REPO.toLowerCase()) {
+                        error 'IMAGE_REPO must be lowercase.'
+                    }
+                    echo "Image: ${env.REGISTRY}/${env.IMAGE_REPO}:${env.GIT_SHA}"
+                }
             }
         }
 
@@ -62,22 +117,106 @@ spec:
             }
         }
 
+        stage('Security Scans') {
+            failFast true
+            parallel {
+                stage('Secrets') {
+                    steps {
+                        container('gitleaks') {
+                            // The workspace is owned by the Jenkins user, not the container's
+                            // root user, so git needs it marked safe.
+                            sh '''
+                                git config --global --add safe.directory "$WORKSPACE"
+                                gitleaks detect --source . --redact --exit-code 1 \
+                                  --report-format json --report-path gitleaks-report.json
+                            '''
+                        }
+                    }
+                }
+                stage('Go vulnerabilities') {
+                    steps {
+                        dir('app') {
+                            sh '''
+                                go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+                                govulncheck ./...
+                            '''
+                        }
+                    }
+                }
+                stage('Filesystem') {
+                    steps {
+                        container('trivy') {
+                            sh 'trivy fs --scanners vuln,secret,misconfig --exit-code 1 --severity HIGH,CRITICAL .'
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Compile') {
             steps {
                 dir('app') {
-                    // -buildvcs=false: the checkout is owned by the Jenkins user while
-                    // the golang container runs as root, so git refuses the repo
-                    // ("dubious ownership") and Go's VCS stamping fails with exit 128.
+                    // -buildvcs=false: the checkout is owned by the Jenkins user while the
+                    // golang container runs as root, so git rejects the repo ("dubious
+                    // ownership") and Go's VCS stamping fails with exit 128.
                     sh 'CGO_ENABLED=0 go build -buildvcs=false -o ../kubership .'
                     sh 'test -x ../kubership'
                 }
             }
         }
 
+        stage('Build Image') {
+            steps {
+                container('buildah') {
+                    sh '''
+                        set -eu
+                        IMG="$REGISTRY/$IMAGE_REPO:$GIT_SHA"
+                        buildah bud --format docker --build-arg VERSION="$GIT_SHA" -f Dockerfile -t "$IMG" .
+                        buildah push "$IMG" docker-archive:image.tar
+                    '''
+                }
+            }
+        }
+
+        // Scan the built image before it is pushed, so a vulnerable image never
+        // reaches the registry.
+        stage('Scan Image') {
+            steps {
+                container('trivy') {
+                    sh 'trivy image --input image.tar --exit-code 1 --severity HIGH,CRITICAL'
+                }
+            }
+        }
+
+        stage('Publish') {
+            when { branch 'main' }
+            steps {
+                container('buildah') {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'registry-creds',
+                        usernameVariable: 'REGISTRY_USER',
+                        passwordVariable: 'REGISTRY_PASSWORD'
+                    )]) {
+                        // Single-quoted so the shell, not Groovy, reads the secret.
+                        sh '''
+                            set -eu
+                            printf '%s' "$REGISTRY_PASSWORD" | buildah login \
+                              --username "$REGISTRY_USER" --password-stdin "$REGISTRY"
+                            buildah push --digestfile image-digest.txt "$REGISTRY/$IMAGE_REPO:$GIT_SHA"
+                            echo "$REGISTRY/$IMAGE_REPO@$(cat image-digest.txt)" > image-ref.txt
+                            buildah logout --all
+                        '''
+                    }
+                }
+                // The digest, not the mutable tag, identifies the artifact to promote.
+                archiveArtifacts artifacts: 'image-digest.txt,image-ref.txt', fingerprint: true
+            }
+        }
+
         stage('Archive Evidence') {
             steps {
                 archiveArtifacts(
-                    artifacts: 'kubership,app/coverage.out',
+                    artifacts: 'kubership,app/coverage.out,gitleaks-report.json',
                     fingerprint: true
                 )
             }
