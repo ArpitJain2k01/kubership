@@ -1,8 +1,8 @@
 // Kubership CI: verify -> security scans -> build image -> scan image -> publish.
 //
-// Jenkins configuration this pipeline expects (nothing is hardcoded here):
-//   - REGISTRY and IMAGE_REPO as Jenkins environment variables
-//     (Manage Jenkins -> System -> Global properties, or JCasC).
+// Jenkins configuration this pipeline uses:
+//   - REGISTRY and IMAGE_REPO: taken from Jenkins environment variables when the
+//     pipeline can see them, otherwise from the defaults in `environment` below.
 //     IMAGE_REPO must be lowercase, e.g. arpitjain2k01/kubership.
 //   - A "Username with password" credential with ID `registry-creds`
 //     holding a registry token with the minimum publish scope.
@@ -55,6 +55,13 @@ spec:
         }
     }
 
+    // Global properties set in the Jenkins UI were not visible to this pod-agent
+    // pipeline, so fall back to defaults. A value Jenkins does provide wins.
+    environment {
+        REGISTRY   = "${env.REGISTRY ?: 'ghcr.io'}"
+        IMAGE_REPO = "${env.IMAGE_REPO ?: 'arpitjain2k01/kubership'}"
+    }
+
     options {
         timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
@@ -77,8 +84,9 @@ spec:
         stage('Preflight') {
             steps {
                 script {
+                    echo "REGISTRY=[${env.REGISTRY}] IMAGE_REPO=[${env.IMAGE_REPO}]"
                     if (!env.REGISTRY?.trim() || !env.IMAGE_REPO?.trim()) {
-                        error 'REGISTRY and IMAGE_REPO must be set as Jenkins environment variables.'
+                        error 'REGISTRY and IMAGE_REPO must not be empty.'
                     }
                     if (env.IMAGE_REPO != env.IMAGE_REPO.toLowerCase()) {
                         error 'IMAGE_REPO must be lowercase.'
