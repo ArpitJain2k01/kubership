@@ -1,0 +1,8 @@
+.git
+.gitignore
+Dockerfile
+Jenkinsfile
+deploy
+jenkins
+docs
+**/*_test.go

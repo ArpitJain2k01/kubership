@@ -1,0 +1,2 @@
+# Helm values for the Jenkins chart (jenkinsci/jenkins).
+# Populated in the next Phase 3 steps together with the JCasC files in ./casc.
