@@ -65,7 +65,10 @@ spec:
         stage('Compile') {
             steps {
                 dir('app') {
-                    sh 'CGO_ENABLED=0 go build -o ../kubership .'
+                    // -buildvcs=false: the checkout is owned by the Jenkins user while
+                    // the golang container runs as root, so git refuses the repo
+                    // ("dubious ownership") and Go's VCS stamping fails with exit 128.
+                    sh 'CGO_ENABLED=0 go build -buildvcs=false -o ../kubership .'
                     sh 'test -x ../kubership'
                 }
             }
