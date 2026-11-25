@@ -1,0 +1,20 @@
+services:
+  kubership:
+    image: kubership:latest
+    container_name: kubership
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      PORT: "8080"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    stop_grace_period: 15s
