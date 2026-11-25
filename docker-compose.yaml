@@ -1,6 +1,6 @@
 services:
   kubership:
-    image: kubership:latest
+    image: itsajsince2ko1/kubership:v1.0.0
     container_name: kubership
     restart: unless-stopped
 
