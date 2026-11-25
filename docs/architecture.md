@@ -12,6 +12,7 @@ Jenkins-based CI/CD pipeline on Kubernetes.
 | Pipeline | `Jenkinsfile` | Declarative Jenkins pipeline (stages added step by step in Phase 3). |
 | Kubernetes manifests | `deploy/` | Kustomize `base` plus `dev` and `staging` overlays. |
 | Jenkins config | `jenkins/` | Helm values and Configuration-as-Code (`casc/`) for the Jenkins controller. |
+| Docker compose file | `docker-compose.yaml` |  docker compose file to deploy the app |
 
 ## Flow
 
